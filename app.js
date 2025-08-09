@@ -76,6 +76,19 @@ if (typeof window.ethereum !== 'undefined' || typeof window.web3 !== 'undefined'
   alert('Web3 not detected. Please install MetaMask or another Web3 wallet.');
 }
 
+async function getWalletAddress() {
+  if (window.ethereum) {
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+      return accounts.length > 0 ? accounts[0] : null;
+    } catch (error) {
+      console.error('Error getting wallet address:', error);
+      return null;
+    }
+  }
+  return null;
+}
+
 async function enableWallet() {
   if (window.ethereum) {
     try {
@@ -127,27 +140,21 @@ document.getElementById('connect-wallet').addEventListener('click', async () => 
 
   if (connectWalletButton.textContent === 'Connect Wallet') {
     const walletConnected = await enableWallet();
-    if (walletConnected) {
-      updateUI(true);
+    if (walletConnected && googleApiInitialized) {
+      const walletAddress = await getWalletAddress();
+      if (walletAddress) {
+        walletFolderId = await createFolderForWallet(walletAddress);
+      }
     }
+    updateUI(walletConnected);
   } else {
     await disconnectWallet();
+    walletFolderId = null;
     updateUI(false);
   }
 });
 
 let googleApiInitialized = false;
-function initClient() {
-  gapi.client
-    .init({
-      apiKey: API_KEY,
-      clientId: CLIENT_ID,
-      scope: SCOPES,
-    })
-    .then(() => {
-      googleApiInitialized = true;
-    });
-}
 
 
 async function listFilesInFolder(folderId) {
@@ -177,61 +184,63 @@ async function listFilesInFolder(folderId) {
 document.getElementById('upload-form').addEventListener('submit', async (event) => {
   event.preventDefault();
 
+  const connectWalletButton = document.getElementById('connect-wallet');
+  const fileInput = document.getElementById('file-input');
+  const files = fileInput.files;
+  const walletConnected = localStorage.getItem('walletConnected') === 'true';
+
   if (!walletConnected) {
     alert('Connect the wallet first');
     return;
   }
 
-  const files = document.getElementById('file-input').files;
-
-  for (const file of files) {
-    await uploadToGoogleDrive(file, walletFolderId);
+  if (files.length === 0) {
+    alert('Please choose at least one file to upload');
+    return;
   }
 
-  // List the uploaded files
-  await listFilesInFolder(walletFolderId);
-});
-
-
-document.getElementById('upload-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-
-  const connectWalletButton = document.getElementById('connect-wallet');
-  const fileInput = document.getElementById('file-input');
-  const files = fileInput.files;
-
-  if (connectWalletButton.textContent !== 'Connect Wallet') {
-    if (files.length === 0) {
-      alert('Please choose at least one file to upload');
-    } else {
-      let emptyFile = false;
-
-      for (let i = 0; i < files.length; i++) {
-        if (files[i].size === 0) {
-          emptyFile = true;
-          break;
-        }
-      }
-
-      if (emptyFile) {
-        alert('Empty files cannot be uploaded');
-      } else if (!googleApiInitialized) {
-        alert('Google API client is not initialized. Please refresh the page and try again.');
-      } else {
-        // Process the file upload
-        for (let i = 0; i < files.length; i++) {
-          try {
-            const fileId = await uploadToGoogleDrive(files[i]);
-            console.log(`File uploaded to Google Drive with ID: ${fileId}`);
-          } catch (error) {
-            console.error(`Error uploading file ${files[i].name}:`, error);
-            alert(`Error uploading file ${files[i].name}`);
-          }
-        }
-        alert('File upload(s) completed');
-      }
+  let emptyFile = false;
+  for (let i = 0; i < files.length; i++) {
+    if (files[i].size === 0) {
+      emptyFile = true;
+      break;
     }
   }
+
+  if (emptyFile) {
+    alert('Empty files cannot be uploaded');
+    return;
+  }
+
+  if (!googleApiInitialized) {
+    alert('Google API client is not initialized. Please refresh the page and try again.');
+    return;
+  }
+
+  if (!walletFolderId) {
+    const walletAddress = await getWalletAddress();
+    if (walletAddress) {
+      walletFolderId = await createFolderForWallet(walletAddress);
+    } else {
+      alert('Unable to get wallet address');
+      return;
+    }
+  }
+
+  // Process the file upload
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const fileId = await uploadToGoogleDrive(files[i], walletFolderId);
+      console.log(`File uploaded to Google Drive with ID: ${fileId}`);
+    } catch (error) {
+      console.error(`Error uploading file ${files[i].name}:`, error);
+      alert(`Error uploading file ${files[i].name}`);
+    }
+  }
+  
+  // List the uploaded files
+  await listFilesInFolder(walletFolderId);
+  alert('File upload(s) completed');
 });
 
 
